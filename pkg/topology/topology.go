@@ -13,7 +13,7 @@ import (
 
 type ConnectionHandler = func(id string, peer peer.Peer)
 type PeerMessageHandler = func(id string, msg string)
-type FullyConnectedTopology struct {
+type Topology struct {
 	me            string
 	serverAddress string
 	peers         map[string]*peer.Peer
@@ -23,8 +23,8 @@ type FullyConnectedTopology struct {
 	peerMessageHandlers []PeerMessageHandler
 }
 
-func NewFullyConnectedTopology(me string, serverAddress string) *FullyConnectedTopology {
-	topology := FullyConnectedTopology{
+func NewTopology(me string, serverAddress string) *Topology {
+	topology := Topology{
 		me:            me,
 		serverAddress: serverAddress,
 		peers:         make(map[string]*peer.Peer),
@@ -33,11 +33,11 @@ func NewFullyConnectedTopology(me string, serverAddress string) *FullyConnectedT
 	return &topology
 }
 
-func (t *FullyConnectedTopology) GetMe() string {
+func (t *Topology) GetMe() string {
 	return t.me
 }
 
-func (t *FullyConnectedTopology) Listen(address string) {
+func (t *Topology) Listen(address string) {
 	tcpAddr, err := net.ResolveTCPAddr("tcp4", address)
 	utils.HandleFatalError("cannot resolve server address", err)
 
@@ -48,7 +48,7 @@ func (t *FullyConnectedTopology) Listen(address string) {
 	go t.ListenIncomingPeers()
 }
 
-func (t *FullyConnectedTopology) ListenIncomingPeers() {
+func (t *Topology) ListenIncomingPeers() {
 	for {
 		conn, err := t.server.AcceptTCP()
 		if err != nil {
@@ -66,13 +66,13 @@ func (t *FullyConnectedTopology) ListenIncomingPeers() {
 	}
 }
 
-func (t *FullyConnectedTopology) AddPeers(peers []string) {
+func (t *Topology) AddPeers(peers []string) {
 	for _, peer := range peers {
 		t.addPeer(peer)
 	}
 }
 
-func (t *FullyConnectedTopology) OnMessage(handler PeerMessageHandler) {
+func (t *Topology) OnMessage(handler PeerMessageHandler) {
 	if t.peerMessageHandlers == nil {
 		t.peerMessageHandlers = make([]PeerMessageHandler, 0)
 	}
@@ -83,20 +83,20 @@ func (t *FullyConnectedTopology) OnMessage(handler PeerMessageHandler) {
 	}
 }
 
-func (t *FullyConnectedTopology) OnConnection(handler ConnectionHandler) {
+func (t *Topology) OnConnection(handler ConnectionHandler) {
 	if t.connectionHandlers == nil {
 		t.connectionHandlers = make([]func(id string, peer peer.Peer), 0)
 	}
 	t.connectionHandlers = append(t.connectionHandlers, handler)
 }
 
-func (t *FullyConnectedTopology) Broadcast(msg string) {
+func (t *Topology) Broadcast(msg string) {
 	for _, p := range t.peers {
 		p.Write(msg)
 	}
 }
 
-func (t *FullyConnectedTopology) initPeer(p *peer.Peer) string {
+func (t *Topology) initPeer(p *peer.Peer) string {
 	p.Connect()
 	peerId := p.GetRemoteAddress()
 	t.peers[peerId] = p
@@ -110,7 +110,7 @@ func (t *FullyConnectedTopology) initPeer(p *peer.Peer) string {
 	return peerId
 }
 
-func (t *FullyConnectedTopology) addPeer(address string) {
+func (t *Topology) addPeer(address string) {
 	parts := strings.Split(address, ":")
 	port, err := strconv.Atoi(parts[1])
 	if err != nil {

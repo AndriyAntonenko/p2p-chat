@@ -20,7 +20,7 @@ func main() {
 	address := os.Args[2]
 	peers := os.Args[3:]
 
-	network := topology.NewFullyConnectedTopology(name, address)
+	network := topology.NewTopology(name, address)
 
 	network.OnConnection(func(id string, peer peer.Peer) {
 		fmt.Fprintf(os.Stdout, "%s connected\n", id)
