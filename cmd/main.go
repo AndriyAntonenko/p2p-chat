@@ -1,13 +1,15 @@
 package main
 
 import (
+	"bufio"
 	"fmt"
+	"log"
 	"os"
 	"os/signal"
 	"syscall"
 
-	"github.com/AndriyAntonenko/my-peer/pkg/peer"
 	"github.com/AndriyAntonenko/my-peer/pkg/topology"
+	"github.com/AndriyAntonenko/my-peer/pkg/utils"
 )
 
 func main() {
@@ -20,15 +22,33 @@ func main() {
 	address := os.Args[2]
 	peers := os.Args[3:]
 
+	go runNetwork(name, address, peers)
+
+	quit := make(chan os.Signal)
+	signal.Notify(quit, syscall.SIGTERM, syscall.SIGINT)
+
+	// block main goroutine
+	<-quit
+}
+
+// @TODO: Create Text based user interface with list of users, messages box, and input field
+// Lib to use https://github.com/gdamore/tcell
+func readInput(network *topology.Topology) {
+	scanner := bufio.NewScanner(os.Stdin)
+	for scanner.Scan() {
+		network.Broadcast(scanner.Text())
+	}
+
+	if err := scanner.Err(); err != nil {
+		utils.HandleFatalError("scanner error", err)
+	}
+}
+
+func runNetwork(name string, address string, peers []string) {
 	network := topology.NewTopology(name, address)
 
-	network.OnConnection(func(id string, peer peer.Peer) {
-		fmt.Fprintf(os.Stdout, "%s connected\n", id)
-		peer.Write(fmt.Sprintf("Hello from %s!", network.GetMe()))
-	})
-
-	network.OnMessage(func(id string, msg string) {
-		fmt.Fprintf(os.Stdout, "[%s]-> %s\n", id, msg)
+	network.OnMessage(func(msg topology.Message) {
+		log.Printf("[%s]-> %s\n", msg.AuthorName, msg.Content)
 	})
 
 	network.Listen(address)
@@ -37,9 +57,5 @@ func main() {
 		network.Broadcast(fmt.Sprintf("Hello from %s!", network.GetMe()))
 	}
 
-	quit := make(chan os.Signal)
-	signal.Notify(quit, syscall.SIGTERM, syscall.SIGINT)
-
-	// block main goroutine
-	<-quit
+	go readInput(network)
 }

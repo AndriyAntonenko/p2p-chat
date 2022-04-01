@@ -1,6 +1,7 @@
 package topology
 
 import (
+	"encoding/json"
 	"fmt"
 	"net"
 	"os"
@@ -11,15 +12,20 @@ import (
 	"github.com/AndriyAntonenko/my-peer/pkg/utils"
 )
 
-type ConnectionHandler = func(id string, peer peer.Peer)
-type PeerMessageHandler = func(id string, msg string)
+type PeerMessageHandler = func(msg Message)
+type Message struct {
+	Kind          string `json:"kind"`
+	AuthorName    string `json:"authorName"`
+	AuthorAddress string `json:"authorAddress"`
+	Content       string `json:"content"`
+}
+
 type Topology struct {
 	me            string
 	serverAddress string
 	peers         map[string]*peer.Peer
 	server        *net.TCPListener
 
-	connectionHandlers  []ConnectionHandler
 	peerMessageHandlers []PeerMessageHandler
 }
 
@@ -55,12 +61,39 @@ func (t *Topology) ListenIncomingPeers() {
 			continue
 		}
 
-		newPeer := peer.NewPeerFromSocket(conn)
-		peerId := t.initPeer(newPeer)
+		go t.handleMessage(conn)
+	}
+}
 
-		if t.connectionHandlers != nil {
-			for _, handler := range t.connectionHandlers {
-				handler(peerId, *newPeer)
+func (t *Topology) handleMessage(conn *net.TCPConn) {
+	defer conn.Close()
+
+	for {
+		var msg Message
+		decoder := json.NewDecoder(conn)
+		if err := decoder.Decode(&msg); err != nil {
+			return
+		}
+
+		if msg.Kind == "INTRO" {
+			parts := utils.SplitAddress(msg.AuthorAddress)
+			peerId := fmt.Sprintf("%s:%s", msg.AuthorName, msg.AuthorAddress)
+			if _, alreadyInList := t.peers[peerId]; alreadyInList {
+				return
+			}
+			newPeer := peer.NewPeer(parts.Host, parts.Port)
+			t.peers[peerId] = newPeer
+			t.sendIntroduceMessage(newPeer)
+			return
+		}
+
+		if msg.Kind == "PLAIN" {
+			peerId := fmt.Sprintf("%s:%s", msg.AuthorName, msg.AuthorAddress)
+			if _, ok := t.peers[peerId]; !ok {
+				return
+			}
+			for _, handler := range t.peerMessageHandlers {
+				handler(msg)
 			}
 		}
 	}
@@ -78,36 +111,18 @@ func (t *Topology) OnMessage(handler PeerMessageHandler) {
 	}
 	t.peerMessageHandlers = append(t.peerMessageHandlers, handler)
 
-	for _, peer := range t.peers {
-		peer.OnMessage(handler)
-	}
 }
 
-func (t *Topology) OnConnection(handler ConnectionHandler) {
-	if t.connectionHandlers == nil {
-		t.connectionHandlers = make([]func(id string, peer peer.Peer), 0)
+func (t *Topology) Broadcast(msg string) error {
+	jsonMsg, err := json.Marshal(t.buildPlainMessage(msg))
+	if err != nil {
+		return err
 	}
-	t.connectionHandlers = append(t.connectionHandlers, handler)
-}
 
-func (t *Topology) Broadcast(msg string) {
 	for _, p := range t.peers {
-		p.Write(msg)
+		p.Write(string(jsonMsg))
 	}
-}
-
-func (t *Topology) initPeer(p *peer.Peer) string {
-	p.Connect()
-	peerId := p.GetRemoteAddress()
-	t.peers[peerId] = p
-
-	if t.peerMessageHandlers != nil && len(t.peerMessageHandlers) > 0 {
-		for _, handler := range t.peerMessageHandlers {
-			p.OnMessage(handler)
-		}
-	}
-
-	return peerId
+	return nil
 }
 
 func (t *Topology) addPeer(address string) {
@@ -120,5 +135,30 @@ func (t *Topology) addPeer(address string) {
 	host := parts[0]
 
 	newPeer := peer.NewPeer(host, uint16(port))
-	t.initPeer(newPeer)
+	t.sendIntroduceMessage(newPeer)
+}
+
+func (t *Topology) sendIntroduceMessage(p *peer.Peer) {
+	msg, err := json.Marshal(t.buildIntroduceMessage())
+	if err != nil {
+		fmt.Fprintf(os.Stderr, err.Error())
+	}
+	p.Write(string(msg))
+}
+
+func (t *Topology) buildIntroduceMessage() Message {
+	return Message{
+		AuthorName:    t.me,
+		AuthorAddress: t.serverAddress,
+		Kind:          "INTRO",
+	}
+}
+
+func (t *Topology) buildPlainMessage(content string) Message {
+	return Message{
+		AuthorName:    t.me,
+		AuthorAddress: t.serverAddress,
+		Kind:          "PLAIN",
+		Content:       content,
+	}
 }
